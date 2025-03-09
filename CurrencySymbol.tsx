@@ -237,6 +237,104 @@ export function parseCurrencyString(currencyString: string): number {
 }
 
 /**
+ * Convert country code to country name
+ * @param countryCode ISO country code (e.g., 'US', 'GB') or full country name
+ * @param lowercase Whether to return the country name in lowercase
+ * @returns The corresponding country name or the original code if not found
+ */
+export function getCountryNameFromCode(countryCode: string, lowercase: boolean = false): string {
+  // If empty or null, return empty string
+  if (!countryCode) return '';
+  
+  const countryNames: Record<string, string> = {
+      AE: 'United Arab Emirates',
+      AR: 'Argentina',
+      AT: 'Austria',
+      AU: 'Australia',
+      BE: 'Belgium',
+      BG: 'Bulgaria',
+      BH: 'Bahrain',
+      BR: 'Brazil',
+      BW: 'Botswana',
+      CA: 'Canada',
+      CH: 'Switzerland',
+      CN: 'China',
+      CY: 'Cyprus',
+      CZ: 'Czech Republic',
+      DE: 'Germany',
+      DK: 'Denmark',
+      EE: 'Estonia',
+      EG: 'Egypt',
+      ES: 'Spain',
+      ET: 'Ethiopia',
+      FI: 'Finland',
+      FR: 'France',
+      GB: 'United Kingdom',
+      GH: 'Ghana',
+      GM: 'Gambia',
+      GR: 'Greece',
+      HU: 'Hungary',
+      IE: 'Ireland',
+      IL: 'Israel',
+      IN: 'India',
+      IT: 'Italy',
+      JP: 'Japan',
+      KE: 'Kenya',
+      LT: 'Lithuania',
+      LU: 'Luxembourg',
+      LV: 'Latvia',
+      MA: 'Morocco',
+      MT: 'Malta',
+      MU: 'Mauritius',
+      MW: 'Malawi',
+      MX: 'Mexico',
+      MY: 'Malaysia',
+      NG: 'Nigeria',
+      NL: 'Netherlands',
+      NO: 'Norway',
+      NZ: 'New Zealand',
+      PE: 'Peru',
+      PL: 'Poland',
+      PT: 'Portugal',
+      QA: 'Qatar',
+      RU: 'Russia',
+      RW: 'Rwanda',
+      SA: 'Saudi Arabia',
+      SE: 'Sweden',
+      SG: 'Singapore',
+      SI: 'Slovenia',
+      SK: 'Slovakia',
+      SL: 'Sierra Leone',
+      TH: 'Thailand',
+      TR: 'Turkey',
+      TZ: 'Tanzania',
+      UG: 'Uganda',
+      US: 'United States',
+      USA: 'United States',
+      VE: 'Venezuela',
+      VN: 'Vietnam',
+      ZA: 'South Africa',
+      ZM: 'Zambia',
+  };
+  
+  // Handle non-ISO codes and full names
+  const normalizedCode = countryCode.trim().toUpperCase();
+  
+  // If it's already a full country name, just return it
+  const allCountryNames = Object.values(countryNames).map(name => name.toUpperCase());
+  if (allCountryNames.includes(normalizedCode)) {
+      const exactName = Object.values(countryNames).find(
+          name => name.toUpperCase() === normalizedCode
+      );
+      return lowercase ? exactName!.toLowerCase() : exactName!;
+  }
+  
+  // Try to find by ISO code
+  const name = countryNames[normalizedCode] || countryCode;
+  return lowercase ? name.toLowerCase() : name;
+}
+
+/**
  * Get the currency code for a given country code
  * @param countryCode ISO country code (e.g., 'US', 'GB')
  * @returns The corresponding currency code or undefined
