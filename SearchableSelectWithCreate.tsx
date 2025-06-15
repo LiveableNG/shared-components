@@ -40,7 +40,7 @@ const SearchableSelectWithCreate = ({
     const [isCreating, setIsCreating] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
-    const selectedOption = options.find((opt: any) => opt.name === value);
+    const selectedOption = options.find((opt: any) => opt.id === value);
 
     const filteredOptions = options.filter((opt: any) =>
         opt.name.toLowerCase().includes(search.toLowerCase())
@@ -123,7 +123,7 @@ const SearchableSelectWithCreate = ({
                                     <div
                                         key={option.id}
                                         className={`flex items-center justify-between px-4 py-2 text-sm cursor-pointer hover:bg-gray-50 ${
-                                            option.name === value
+                                            option.id === value
                                                 ? 'bg-gray-50'
                                                 : ''
                                         }`}
@@ -136,7 +136,7 @@ const SearchableSelectWithCreate = ({
                                         <span className="text-tmgrey500">
                                             {option.name}
                                         </span>
-                                        {option.name === value && (
+                                        {option.id === value && (
                                             <CheckIcon className="h-4 w-4 text-tmprimary" />
                                         )}
                                     </div>
