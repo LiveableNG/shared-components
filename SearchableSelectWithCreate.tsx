@@ -154,7 +154,7 @@ const SearchableSelectWithCreate = ({
                                         <span>
                                             {search
                                                 ? `Add "${search}"`
-                                                : 'Add new category'}
+                                                : 'Add new'}
                                         </span>
                                     </div>
                                 )}
@@ -173,7 +173,7 @@ const SearchableSelectWithCreate = ({
                                                     setNewItemName(search);
                                                 }
                                             }}
-                                            placeholder="Enter category name"
+                                            placeholder="Enter name"
                                             autoFocus
                                             onClick={(e) => e.stopPropagation()}
                                         />
