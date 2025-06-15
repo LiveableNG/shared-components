@@ -772,3 +772,84 @@ export function formatCompactCurrency(
 }
 
 export default getCurrencySymbol;
+
+/**
+ * Convert country name to ISO country code
+ * @param countryName The country name (e.g., 'United States')
+ * @returns The corresponding ISO country code or undefined if not found
+ */
+export function getCountryCodeFromName(
+    countryName: string
+): string | undefined {
+    const countryNames: Record<string, string> = {
+        'United Arab Emirates': 'AE',
+        Argentina: 'AR',
+        Australia: 'AU',
+        Bulgaria: 'BG',
+        Bahrain: 'BH',
+        Brazil: 'BR',
+        Botswana: 'BW',
+        Canada: 'CA',
+        Switzerland: 'CH',
+        China: 'CN',
+        'Czech Republic': 'CZ',
+        Denmark: 'DK',
+        Egypt: 'EG',
+        Ethiopia: 'ET',
+        Austria: 'AT',
+        Belgium: 'BE',
+        Cyprus: 'CY',
+        Estonia: 'EE',
+        Finland: 'FI',
+        France: 'FR',
+        Germany: 'DE',
+        Greece: 'GR',
+        Ireland: 'IE',
+        Italy: 'IT',
+        Latvia: 'LV',
+        Lithuania: 'LT',
+        Luxembourg: 'LU',
+        Malta: 'MT',
+        Netherlands: 'NL',
+        Portugal: 'PT',
+        Slovakia: 'SK',
+        Slovenia: 'SI',
+        Spain: 'ES',
+        'United Kingdom': 'GB',
+        Ghana: 'GH',
+        Gambia: 'GM',
+        Hungary: 'HU',
+        Israel: 'IL',
+        India: 'IN',
+        Japan: 'JP',
+        Kenya: 'KE',
+        Morocco: 'MA',
+        Mauritius: 'MU',
+        Malawi: 'MW',
+        Mexico: 'MX',
+        Malaysia: 'MY',
+        Nigeria: 'NG',
+        Norway: 'NO',
+        'New Zealand': 'NZ',
+        Peru: 'PE',
+        Poland: 'PL',
+        Qatar: 'QA',
+        Russia: 'RU',
+        Rwanda: 'RW',
+        'Saudi Arabia': 'SA',
+        Sweden: 'SE',
+        Singapore: 'SG',
+        'Sierra Leone': 'SL',
+        Thailand: 'TH',
+        Turkey: 'TR',
+        Tanzania: 'TZ',
+        Uganda: 'UG',
+        'United States': 'US',
+        Venezuela: 'VE',
+        Vietnam: 'VN',
+        'South Africa': 'ZA',
+        Zambia: 'ZM',
+    };
+
+    return countryNames[countryName.trim()];
+}
