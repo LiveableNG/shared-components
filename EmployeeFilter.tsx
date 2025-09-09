@@ -45,7 +45,7 @@ const EmployeeFilter = ({
         try {
             setIsLoading(true);
             const response = await $api.fetch(
-                `/api/v3/company/staff?search=${search || ''}`
+                `/api/v3/company/employees?search=${search || ''}`
             );
             if ($api.isSuccessful(response)) {
                 const employeeData = response?.data || [];
