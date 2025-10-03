@@ -7,6 +7,7 @@ interface ModalProps {
     reference: React.RefObject<HTMLDivElement>;
     children: ReactNode;
     disableClickOut?: boolean;
+    maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '4xl' | '6xl';
 }
 
 const Modal = ({
@@ -15,6 +16,7 @@ const Modal = ({
     reference,
     children,
     disableClickOut = false,
+    maxWidth = 'md',
 }: ModalProps) => {
     useEffect(() => {
         if (isActive) {
@@ -26,6 +28,19 @@ const Modal = ({
     }, [isActive]);
 
     if (!isActive) return null;
+
+    const getMaxWidthClass = (size: string) => {
+        const sizeMap = {
+            'sm': 'max-w-sm',    // 384px
+            'md': 'max-w-[500px]', // 500px (current default)
+            'lg': 'max-w-2xl',   // 672px
+            'xl': 'max-w-4xl',   // 896px
+            '2xl': 'max-w-6xl',  // 1152px
+            '4xl': 'max-w-7xl',  // 1280px
+            '6xl': 'max-w-full', // Full width with margins
+        };
+        return sizeMap[size as keyof typeof sizeMap] || sizeMap.md;
+    };
 
     return createPortal(
         <>
@@ -45,7 +60,7 @@ const Modal = ({
             <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
                 <div
                     ref={reference}
-                    className="relative bg-white rounded-2xl shadow-xl w-full max-w-[500px] mx-4 max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in duration-200 pointer-events-auto"
+                    className={`relative bg-white rounded-2xl shadow-xl w-full ${getMaxWidthClass(maxWidth)} mx-4 max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in duration-200 pointer-events-auto`}
                     onClick={(e) => e.stopPropagation()}
                 >
                     {children}
