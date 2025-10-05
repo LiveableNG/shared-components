@@ -76,8 +76,8 @@ const EmployeeFilter = ({
     }, []);
 
     const handleEmployeeChange = (option: any) => {
-        if (option.id === 'all') {
-            onEmployeeChange(null);
+        if (option.id === 'all_employees') {
+            onEmployeeChange(option);
         } else {
             const employee = employees.find(emp => emp.id === option.id);
             onEmployeeChange(employee || null);
@@ -86,7 +86,7 @@ const EmployeeFilter = ({
 
     // Prepare options for SearchableSelect
     const options = [
-        ...(showAllOption ? [{ id: 'all', name: allOptionLabel, code: 'all' }] : []),
+        ...(showAllOption ? [{ id: 'all_employees', name: allOptionLabel, code: 'all_employees' }] : []),
         ...employees.map(emp => ({
             id: emp.id,
             name: emp.name,
