@@ -84,6 +84,14 @@ const EmployeeFilter = ({
         }
     };
 
+    // Set default to "All Employees" if no employee is selected
+    useEffect(() => {
+        if (!selectedEmployeeId && showAllOption && employees.length > 0) {
+            const allEmployeesOption = { id: 'all_employees', name: allOptionLabel };
+            onEmployeeChange(allEmployeesOption);
+        }
+    }, [selectedEmployeeId, showAllOption, employees.length, allOptionLabel, onEmployeeChange]);
+
     // Prepare options for SearchableSelect
     const options = [
         ...(showAllOption ? [{ id: 'all_employees', name: allOptionLabel, code: 'all_employees' }] : []),
@@ -94,7 +102,8 @@ const EmployeeFilter = ({
         }))
     ];
 
-    const selectedOption = options.find(opt => opt.code === selectedEmployeeId);
+    const selectedOption = options.find(opt => opt.code === selectedEmployeeId) || 
+                          (showAllOption ? options.find(opt => opt.id === 'all_employees') : undefined);
 
     // Padding utility function
     const getPaddingClasses = () => {
