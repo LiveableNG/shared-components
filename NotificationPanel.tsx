@@ -119,9 +119,10 @@ class NotificationStorage {
     
     try {
       const db = await FirebaseUtil.getFirestore();
-      const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
+      const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
       
-      await addDoc(collection(db, `users/${this.userId}/notifications`), {
+      // Use setDoc with the notification ID as the document ID to ensure they match
+      await setDoc(doc(db, `users/${this.userId}/notifications/${notification.id}`), {
         ...notification,
         timestamp: serverTimestamp()
       });
@@ -145,11 +146,14 @@ class NotificationStorage {
       );
       
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp?.toMillis() || Date.now()
-      } as Notification));
+      return snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id, // Ensure doc.id takes precedence over any id in the document data
+          timestamp: data.timestamp?.toMillis() || Date.now()
+        } as Notification;
+      });
     } catch (error) {
       console.error('Error loading from Firestore:', error);
       return [];
@@ -226,11 +230,14 @@ class NotificationStorage {
       );
       
       return onSnapshot(q, (snapshot) => {
-        const notifications = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          timestamp: doc.data().timestamp?.toMillis() || Date.now()
-        } as Notification));
+        const notifications = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            ...data,
+            id: doc.id, // Ensure doc.id takes precedence over any id in the document data
+            timestamp: data.timestamp?.toMillis() || Date.now()
+          } as Notification;
+        });
         callback(notifications);
       }, (error) => {
         console.error('Firestore listener error:', error);
