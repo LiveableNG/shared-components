@@ -610,7 +610,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
             className="absolute right-0 top-0 h-full w-[400px] bg-white shadow-xl pointer-events-auto transform transition-transform duration-300 ease-in-out"
           >
             {/* Header */}
-            <div className="bg-gradient-to-r from-dkblue to-ltblue text-white p-4 flex items-center justify-between">
+            <div className="bg-[#041D76] text-white p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Bell className="w-5 h-5" />
                 <h2 className="text-lg font-semibold">Notifications</h2>
