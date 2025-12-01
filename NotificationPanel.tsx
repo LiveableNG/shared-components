@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { onMessage, getToken } from 'firebase/messaging';
-import { messaging } from '@/config/firebase';
+import { onMessage } from 'firebase/messaging';
+import { db, messaging } from '@/config/firebase';
 import { Bell, X, ChevronLeft, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'react-toastify';
+import { getFirestore } from 'firebase/firestore';
+import { initializeApp } from 'firebase/app';
 
-// Check if we're in development or production
-const isDevelopment = false
+// Configuration
+const isDevelopment = false;
+
 
 // Notification interface
 interface Notification {
@@ -20,119 +23,88 @@ interface Notification {
   severity?: 'success' | 'error' | 'warning' | 'info';
 }
 
-// Storage Service (handles both localStorage and Firestore)
+// Storage Service
 class NotificationStorage {
   private userId: string | null = null;
   private isDev: boolean = isDevelopment;
   private unsubscribe: (() => void) | null = null;
+  private readonly STORAGE_KEY = 'notifications';
+  private readonly MAX_NOTIFICATIONS = 100;
 
   setUserId(userId: string | null) {
     this.userId = userId;
   }
 
-  // LocalStorage implementation for dev
-  private async saveToLocalStorage(notification: Notification): Promise<void> {
-    const key = 'notifications';
+  // LocalStorage Methods
+  private saveToLocalStorage(notification: Notification): void {
     const existing = this.loadFromLocalStorage();
     existing.unshift(notification);
-    // Keep only last 100 notifications
-    const trimmed = existing.slice(0, 100);
-    localStorage.setItem(key, JSON.stringify(trimmed));
-    
-    // Trigger storage event for real-time updates
-    window.dispatchEvent(new Event('notification-storage-updated'));
+    const trimmed = existing.slice(0, this.MAX_NOTIFICATIONS);
+    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(trimmed));
+    this.triggerStorageUpdate();
   }
 
   private loadFromLocalStorage(): Notification[] {
     try {
-      const data = localStorage.getItem('notifications');
+      const data = localStorage.getItem(this.STORAGE_KEY);
       return data ? JSON.parse(data) : [];
-    } catch {
+    } catch (error) {
+      console.error('Error loading from localStorage:', error);
       return [];
     }
   }
 
-  private async deleteFromLocalStorage(notificationIds: string[]): Promise<void> {
-    const existing = this.loadFromLocalStorage();
-    const filtered = existing.filter(n => !notificationIds.includes(n.id));
-    localStorage.setItem('notifications', JSON.stringify(filtered));
-    window.dispatchEvent(new Event('notification-storage-updated'));
-  }
-
-  private async updateInLocalStorage(notificationId: string, updates: Partial<Notification>): Promise<void> {
+  private updateInLocalStorage(notificationId: string, updates: Partial<Notification>): void {
     const existing = this.loadFromLocalStorage();
     const index = existing.findIndex(n => n.id === notificationId);
+
     if (index !== -1) {
       existing[index] = { ...existing[index], ...updates };
-      localStorage.setItem('notifications', JSON.stringify(existing));
-      window.dispatchEvent(new Event('notification-storage-updated'));
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(existing));
+      this.triggerStorageUpdate();
     }
   }
 
-  // Firestore implementation for production
+  private deleteFromLocalStorage(notificationIds: string[]): void {
+    const existing = this.loadFromLocalStorage();
+    const filtered = existing.filter(n => !notificationIds.includes(n.id));
+    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(filtered));
+    this.triggerStorageUpdate();
+  }
+
+  private triggerStorageUpdate(): void {
+    window.dispatchEvent(new Event('notification-storage-updated'));
+  }
+
+  // Firestore Methods
   private async saveToFirestore(notification: Notification): Promise<void> {
     if (!this.userId) return;
-    
+
     try {
-      // Dynamically import Firestore only in production
-      const { getFirestore, collection, addDoc, serverTimestamp } = await import('firebase/firestore');
-      const { initializeApp, getApps } = await import('firebase/app');
-      
-      // Get Firebase app (reuse existing or create new)
-      let app = getApps()[0];
-      if (!app) {
-        const firebaseConfig = {
-          apiKey: "AIzaSyBdGMDTVi440pxEKCS1qKHb2hOxbuZTEzo",
-          authDomain: "goodtenants-a685f.firebaseapp.com",
-          projectId: "goodtenants-a685f",
-          storageBucket: "goodtenants-a685f.firebasestorage.app",
-          messagingSenderId: "140112142464",
-          appId: "1:140112142464:web:3c8474046e9735535ec665",
-          measurementId: "G-LK0R46B22N"
-        };
-        app = initializeApp(firebaseConfig);
-      }
-      
-      const db = getFirestore(app);
+      const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
+
       await addDoc(collection(db, `users/${this.userId}/notifications`), {
         ...notification,
         timestamp: serverTimestamp()
       });
     } catch (error) {
       console.error('Error saving to Firestore:', error);
-      // Fallback to localStorage if Firestore fails
-      await this.saveToLocalStorage(notification);
+      this.saveToLocalStorage(notification);
     }
   }
 
   private async loadFromFirestore(): Promise<Notification[]> {
     if (!this.userId) return [];
-    
+
     try {
-      const { getFirestore, collection, query, orderBy, limit, getDocs } = await import('firebase/firestore');
-      const { initializeApp, getApps } = await import('firebase/app');
-      
-      let app = getApps()[0];
-      if (!app) {
-        const firebaseConfig = {
-          apiKey: "AIzaSyBdGMDTVi440pxEKCS1qKHb2hOxbuZTEzo",
-          authDomain: "goodtenants-a685f.firebaseapp.com",
-          projectId: "goodtenants-a685f",
-          storageBucket: "goodtenants-a685f.firebasestorage.app",
-          messagingSenderId: "140112142464",
-          appId: "1:140112142464:web:3c8474046e9735535ec665",
-          measurementId: "G-LK0R46B22N"
-        };
-        app = initializeApp(firebaseConfig);
-      }
-      
-      const db = getFirestore(app);
+      const { collection, query, orderBy, limit, getDocs } = await import('firebase/firestore');
+
       const q = query(
         collection(db, `users/${this.userId}/notifications`),
         orderBy('timestamp', 'desc'),
-        limit(100)
+        limit(this.MAX_NOTIFICATIONS)
       );
-      
+
       const snapshot = await getDocs(q);
       return snapshot.docs.map(doc => ({
         id: doc.id,
@@ -145,297 +117,178 @@ class NotificationStorage {
     }
   }
 
-  private async setupFirestoreListener(callback: (notifications: Notification[]) => void): Promise<() => void> {
-    if (!this.userId) return () => {};
-    
+  private async updateInFirestore(notificationId: string, updates: Partial<Notification>): Promise<void> {
+    if (!this.userId) return;
+
     try {
-      const { getFirestore, collection, query, orderBy, limit, onSnapshot } = await import('firebase/firestore');
-      const { initializeApp, getApps } = await import('firebase/app');
-      
-      let app = getApps()[0];
-      if (!app) {
-        const firebaseConfig = {
-          apiKey: "AIzaSyBdGMDTVi440pxEKCS1qKHb2hOxbuZTEzo",
-          authDomain: "goodtenants-a685f.firebaseapp.com",
-          projectId: "goodtenants-a685f",
-          storageBucket: "goodtenants-a685f.firebasestorage.app",
-          messagingSenderId: "140112142464",
-          appId: "1:140112142464:web:3c8474046e9735535ec665",
-          measurementId: "G-LK0R46B22N"
-        };
-        app = initializeApp(firebaseConfig);
+      const { doc, updateDoc } = await import('firebase/firestore');
+
+      await updateDoc(doc(db, `users/${this.userId}/notifications/${notificationId}`), updates);
+    } catch (error) {
+      console.error('Error updating in Firestore:', error);
+      this.updateInLocalStorage(notificationId, updates);
+    }
+  }
+
+  private async deleteFromFirestore(notificationIds: string[]): Promise<void> {
+    if (!this.userId || notificationIds.length === 0) return;
+
+    try {
+      const { writeBatch, doc } = await import('firebase/firestore');
+
+      const batch = writeBatch(db);
+      notificationIds.forEach(id => {
+        const ref = doc(db, `users/${this.userId}/notifications/${id}`);
+        batch.delete(ref);
+      });
+
+      await batch.commit();
+    } catch (error) {
+      console.error('Error deleting from Firestore:', error);
+      this.deleteFromLocalStorage(notificationIds);
+    }
+  }
+
+  private async batchUpdateInFirestore(notificationIds: string[], updates: Partial<Notification>): Promise<void> {
+    if (!this.userId || notificationIds.length === 0) return;
+
+    try {
+      const { writeBatch, doc } = await import('firebase/firestore');
+
+      const batch = writeBatch(db);
+      notificationIds.forEach(id => {
+        const ref = doc(db, `users/${this.userId}/notifications/${id}`);
+        batch.update(ref, updates);
+      });
+
+      await batch.commit();
+    } catch (error) {
+      console.error('Error batch updating in Firestore:', error);
+      for (const id of notificationIds) {
+        this.updateInLocalStorage(id, updates);
       }
-      
-      const db = getFirestore(app);
+    }
+  }
+
+  private async setupFirestoreListener(callback: (notifications: Notification[]) => void): Promise<() => void> {
+    if (!this.userId) return () => { };
+
+    try {
+      const { collection, query, orderBy, limit, onSnapshot } = await import('firebase/firestore');
+
       const q = query(
         collection(db, `users/${this.userId}/notifications`),
         orderBy('timestamp', 'desc'),
-        limit(100)
+        limit(this.MAX_NOTIFICATIONS)
       );
-      
-      const unsubscribe = onSnapshot(q, (snapshot) => {
+
+      return onSnapshot(q, (snapshot) => {
         const notifications = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
           timestamp: doc.data().timestamp?.toMillis() || Date.now()
         } as Notification));
         callback(notifications);
+      }, (error) => {
+        console.error('Firestore listener error:', error);
       });
-      
-      return unsubscribe;
     } catch (error) {
       console.error('Error setting up Firestore listener:', error);
-      return () => {};
+      return () => { };
     }
   }
 
+  // Public API
   async save(notification: Notification): Promise<void> {
     if (this.isDev) {
-      await this.saveToLocalStorage(notification);
+      this.saveToLocalStorage(notification);
     } else {
       await this.saveToFirestore(notification);
     }
   }
 
   async getAll(): Promise<Notification[]> {
-    if (this.isDev) {
-      return this.loadFromLocalStorage();
-    } else {
-      return await this.loadFromFirestore();
-    }
+    return this.isDev ? this.loadFromLocalStorage() : await this.loadFromFirestore();
   }
 
   async markAsRead(notificationId: string): Promise<void> {
     if (this.isDev) {
-      await this.updateInLocalStorage(notificationId, { read: true });
+      this.updateInLocalStorage(notificationId, { read: true });
     } else {
-      // Firestore update
-      if (!this.userId) return;
-      try {
-        const { getFirestore, doc, updateDoc } = await import('firebase/firestore');
-        const { initializeApp, getApps } = await import('firebase/app');
-        
-        let app = getApps()[0];
-        if (!app) {
-          const firebaseConfig = {
-            apiKey: "AIzaSyBdGMDTVi440pxEKCS1qKHb2hOxbuZTEzo",
-            authDomain: "goodtenants-a685f.firebaseapp.com",
-            projectId: "goodtenants-a685f",
-            storageBucket: "goodtenants-a685f.firebasestorage.app",
-            messagingSenderId: "140112142464",
-            appId: "1:140112142464:web:3c8474046e9735535ec665",
-            measurementId: "G-LK0R46B22N"
-          };
-          app = initializeApp(firebaseConfig);
-        }
-        
-        const db = getFirestore(app);
-        await updateDoc(doc(db, `users/${this.userId}/notifications/${notificationId}`), {
-          read: true
-        });
-      } catch (error) {
-        console.error('Error marking as read in Firestore:', error);
-        await this.updateInLocalStorage(notificationId, { read: true });
-      }
+      await this.updateInFirestore(notificationId, { read: true });
     }
   }
 
   async markAllAsRead(): Promise<void> {
     const notifications = await this.getAll();
     const unreadIds = notifications.filter(n => !n.read).map(n => n.id);
-    
+
+    if (unreadIds.length === 0) return;
+
     if (this.isDev) {
-      for (const id of unreadIds) {
-        await this.updateInLocalStorage(id, { read: true });
-      }
+      unreadIds.forEach(id => this.updateInLocalStorage(id, { read: true }));
     } else {
-      // Firestore batch update
-      if (!this.userId || unreadIds.length === 0) return;
-      try {
-        const { getFirestore, writeBatch, doc } = await import('firebase/firestore');
-        const { initializeApp, getApps } = await import('firebase/app');
-        
-        let app = getApps()[0];
-        if (!app) {
-          const firebaseConfig = {
-            apiKey: "AIzaSyBdGMDTVi440pxEKCS1qKHb2hOxbuZTEzo",
-            authDomain: "goodtenants-a685f.firebaseapp.com",
-            projectId: "goodtenants-a685f",
-            storageBucket: "goodtenants-a685f.firebasestorage.app",
-            messagingSenderId: "140112142464",
-            appId: "1:140112142464:web:3c8474046e9735535ec665",
-            measurementId: "G-LK0R46B22N"
-          };
-          app = initializeApp(firebaseConfig);
-        }
-        
-        const db = getFirestore(app);
-        const batch = writeBatch(db);
-        
-        unreadIds.forEach(id => {
-          const ref = doc(db, `users/${this.userId}/notifications/${id}`);
-          batch.update(ref, { read: true });
-        });
-        
-        await batch.commit();
-      } catch (error) {
-        console.error('Error marking all as read in Firestore:', error);
-        // Fallback
-        for (const id of unreadIds) {
-          await this.updateInLocalStorage(id, { read: true });
-        }
-      }
+      await this.batchUpdateInFirestore(unreadIds, { read: true });
     }
   }
 
   async deleteNotification(notificationId: string): Promise<void> {
     if (this.isDev) {
-      await this.deleteFromLocalStorage([notificationId]);
+      this.deleteFromLocalStorage([notificationId]);
     } else {
-      // Firestore delete
-      if (!this.userId) return;
-      try {
-        const { getFirestore, doc, deleteDoc } = await import('firebase/firestore');
-        const { initializeApp, getApps } = await import('firebase/app');
-        
-        let app = getApps()[0];
-        if (!app) {
-          const firebaseConfig = {
-            apiKey: "AIzaSyBdGMDTVi440pxEKCS1qKHb2hOxbuZTEzo",
-            authDomain: "goodtenants-a685f.firebaseapp.com",
-            projectId: "goodtenants-a685f",
-            storageBucket: "goodtenants-a685f.firebasestorage.app",
-            messagingSenderId: "140112142464",
-            appId: "1:140112142464:web:3c8474046e9735535ec665",
-            measurementId: "G-LK0R46B22N"
-          };
-          app = initializeApp(firebaseConfig);
-        }
-        
-        const db = getFirestore(app);
-        await deleteDoc(doc(db, `users/${this.userId}/notifications/${notificationId}`));
-      } catch (error) {
-        console.error('Error deleting notification from Firestore:', error);
-        await this.deleteFromLocalStorage([notificationId]);
-      }
+      await this.deleteFromFirestore([notificationId]);
     }
   }
 
   async deleteAllRead(): Promise<void> {
     const notifications = await this.getAll();
     const readIds = notifications.filter(n => n.read).map(n => n.id);
-    
+
     if (readIds.length === 0) return;
-    
+
     if (this.isDev) {
-      await this.deleteFromLocalStorage(readIds);
+      this.deleteFromLocalStorage(readIds);
     } else {
-      // Firestore batch delete
-      if (!this.userId) return;
-      try {
-        const { getFirestore, writeBatch, doc, deleteDoc } = await import('firebase/firestore');
-        const { initializeApp, getApps } = await import('firebase/app');
-        
-        let app = getApps()[0];
-        if (!app) {
-          const firebaseConfig = {
-            apiKey: "AIzaSyBdGMDTVi440pxEKCS1qKHb2hOxbuZTEzo",
-            authDomain: "goodtenants-a685f.firebaseapp.com",
-            projectId: "goodtenants-a685f",
-            storageBucket: "goodtenants-a685f.firebasestorage.app",
-            messagingSenderId: "140112142464",
-            appId: "1:140112142464:web:3c8474046e9735535ec665",
-            measurementId: "G-LK0R46B22N"
-          };
-          app = initializeApp(firebaseConfig);
-        }
-        
-        const db = getFirestore(app);
-        const batch = writeBatch(db);
-        
-        readIds.forEach(id => {
-          const ref = doc(db, `users/${this.userId}/notifications/${id}`);
-          batch.delete(ref);
-        });
-        
-        await batch.commit();
-      } catch (error) {
-        console.error('Error deleting from Firestore:', error);
-        await this.deleteFromLocalStorage(readIds);
-      }
+      await this.deleteFromFirestore(readIds);
     }
   }
 
   async deleteAll(): Promise<void> {
     const notifications = await this.getAll();
     const allIds = notifications.map(n => n.id);
-    
+
     if (allIds.length === 0) return;
-    
+
     if (this.isDev) {
-      await this.deleteFromLocalStorage(allIds);
+      this.deleteFromLocalStorage(allIds);
     } else {
-      // Firestore batch delete
-      if (!this.userId) return;
-      try {
-        const { getFirestore, writeBatch, doc, deleteDoc } = await import('firebase/firestore');
-        const { initializeApp, getApps } = await import('firebase/app');
-        
-        let app = getApps()[0];
-        if (!app) {
-          const firebaseConfig = {
-            apiKey: "AIzaSyBdGMDTVi440pxEKCS1qKHb2hOxbuZTEzo",
-            authDomain: "goodtenants-a685f.firebaseapp.com",
-            projectId: "goodtenants-a685f",
-            storageBucket: "goodtenants-a685f.firebasestorage.app",
-            messagingSenderId: "140112142464",
-            appId: "1:140112142464:web:3c8474046e9735535ec665",
-            measurementId: "G-LK0R46B22N"
-          };
-          app = initializeApp(firebaseConfig);
-        }
-        
-        const db = getFirestore(app);
-        const batch = writeBatch(db);
-        
-        allIds.forEach(id => {
-          const ref = doc(db, `users/${this.userId}/notifications/${id}`);
-          batch.delete(ref);
-        });
-        
-        await batch.commit();
-      } catch (error) {
-        console.error('Error deleting all notifications from Firestore:', error);
-        await this.deleteFromLocalStorage(allIds);
-      }
+      await this.deleteFromFirestore(allIds);
     }
   }
 
   subscribe(callback: (notifications: Notification[]) => void): () => void {
     if (this.isDev) {
-      // LocalStorage listener
       const handleUpdate = async () => {
         const notifications = await this.getAll();
         callback(notifications);
       };
-      
+
       window.addEventListener('notification-storage-updated', handleUpdate);
-      
-      // Initial load
       handleUpdate();
-      
+
       return () => {
         window.removeEventListener('notification-storage-updated', handleUpdate);
       };
     } else {
-      // Firestore listener
+      let unsubscribe: (() => void) | null = null;
+
       this.setupFirestoreListener(callback).then(unsub => {
-        this.unsubscribe = unsub;
+        unsubscribe = unsub;
       });
-      
+
       return () => {
-        if (this.unsubscribe) {
-          this.unsubscribe();
+        if (unsubscribe) {
+          unsubscribe();
         }
       };
     }
@@ -446,17 +299,88 @@ class NotificationStorage {
   }
 }
 
-// Create singleton instance
+// Singleton instance
 const storage = new NotificationStorage();
 
+// Toast Notification Component
+const createNotificationToast = (
+  notification: Notification,
+  onMarkAsRead: () => void,
+  onDismiss: () => void
+) => {
+  const handleClick = () => {
+    if (notification.url) {
+      window.location.href = notification.url;
+      onDismiss();
+    }
+  };
+
+  return (
+    <div className="py-1">
+      <div
+        className={notification.url ? "cursor-pointer" : ""}
+        onClick={handleClick}
+      >
+        <div className="text-sm line-clamp-2">{notification.body || notification.title}</div>
+      </div>
+      <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/30">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onMarkAsRead();
+          }}
+          className="text-xs text-white/90 hover:text-white font-medium px-2 py-0.5 hover:bg-white/10 rounded transition-colors"
+        >
+          Mark as read
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss();
+          }}
+          className="text-xs text-white/90 hover:text-white font-medium px-2 py-0.5 hover:bg-white/10 rounded transition-colors ml-auto"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const showNotificationToast = (notification: Notification, onMarkAsRead: () => void) => {
+  const toastId = toast(
+    createNotificationToast(
+      notification,
+      onMarkAsRead,
+      () => toast.dismiss(toastId)
+    ),
+    {
+      position: 'top-right',
+      autoClose: 2000,
+      hideProgressBar: true,
+      closeOnClick: false,
+      pauseOnHover: true,
+      draggable: true,
+      style: {
+        cursor: notification.url ? 'pointer' : 'default',
+        background: 'linear-gradient(to right, #041D75, #083BF9)',
+        color: 'white',
+        padding: '12px 16px'
+      },
+      className: 'custom-toast'
+    }
+  );
+};
+
+// Main Component
 interface NotificationPanelProps {
   userId?: string | null;
   className?: string;
 }
 
-const NotificationPanel: React.FC<NotificationPanelProps> = ({ 
-  userId, 
-  className = '' 
+const NotificationPanel: React.FC<NotificationPanelProps> = ({
+  userId,
+  className = ''
 }) => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -464,39 +388,54 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
   const panelRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
 
-  // Set user ID for storage
-  useEffect(() => {
-    storage.setUserId(userId || null);
-    loadNotifications();
-  }, [userId]);
-
-  // Load notifications initially
+  // Load notifications
   const loadNotifications = useCallback(async () => {
     const loaded = await storage.getAll();
     setNotifications(loaded);
   }, []);
 
-  // Subscribe to real-time updates
+  // Trigger bell animation
+  const triggerBellAnimation = useCallback(() => {
+    setIsAnimating(true);
+    setTimeout(() => setIsAnimating(false), 1000);
+  }, []);
+
+  // Handle incoming notification
+  const handleIncomingNotification = useCallback(async (notification: Notification) => {
+    await storage.save(notification);
+    const updated = await storage.getAll();
+    setNotifications(updated);
+
+    showNotificationToast(notification, async () => {
+      await storage.markAsRead(notification.id);
+      const refreshed = await storage.getAll();
+      setNotifications(refreshed);
+    });
+
+    triggerBellAnimation();
+  }, [triggerBellAnimation]);
+
+  // Set user ID
+  useEffect(() => {
+    storage.setUserId(userId || null);
+    loadNotifications();
+  }, [userId, loadNotifications]);
+
+  // Subscribe to storage updates
   useEffect(() => {
     if (!userId) {
       setNotifications([]);
       return;
     }
-    
-    const unsubscribe = storage.subscribe((updated) => {
-      setNotifications(updated);
-    });
-    
-    return () => {
-      unsubscribe();
-    };
+
+    const unsubscribe = storage.subscribe(setNotifications);
+    return unsubscribe;
   }, [userId]);
 
-  // Set up foreground message listener
+  // Foreground message listener
   useEffect(() => {
     const unsubscribe = onMessage(messaging, async (payload: any) => {
       try {
-        // Store notification immediately (before processing)
         const notification: Notification = {
           id: payload.messageId || `${Date.now()}-${Math.random()}`,
           title: payload.notification?.title || payload.data?.title || 'Notification',
@@ -508,173 +447,37 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
           severity: payload.data?.severity || 'info'
         };
 
-        // Store first
-        await storage.save(notification);
-        
-        // Manually reload notifications to update the count immediately
-        const updated = await storage.getAll();
-        setNotifications(updated);
-        
-        // Show toast notification
-        const toastId = toast(
-          <div className="py-1">
-            <div 
-              className={notification.url ? "cursor-pointer" : ""}
-              onClick={() => {
-                if (notification.url) {
-                  window.location.href = notification.url;
-                  toast.dismiss(toastId);
-                }
-              }}
-            >
-              <div className="text-sm line-clamp-2">{notification.body || notification.title}</div>
-            </div>
-            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/30">
-              <button
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  await storage.markAsRead(notification.id);
-                  const updated = await storage.getAll();
-                  setNotifications(updated);
-                  toast.dismiss(toastId);
-                }}
-                className="text-xs text-white/90 hover:text-white font-medium px-2 py-0.5 hover:bg-white/10 rounded transition-colors"
-              >
-                Mark as read
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toast.dismiss(toastId);
-                }}
-                className="text-xs text-white/90 hover:text-white font-medium px-2 py-0.5 hover:bg-white/10 rounded transition-colors ml-auto"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>,
-          {
-            position: 'top-right',
-            autoClose: 2000,
-            hideProgressBar: true,
-            closeOnClick: false,
-            pauseOnHover: true,
-            draggable: true,
-            style: { 
-              cursor: notification.url ? 'pointer' : 'default',
-              background: 'linear-gradient(to right, #041D75, #083BF9)',
-              color: 'white',
-              padding: '12px 16px'
-            },
-            className: 'custom-toast'
-          }
-        );
-        
-        // Trigger bell animation
-        setIsAnimating(true);
-        setTimeout(() => setIsAnimating(false), 1000);
+        await handleIncomingNotification(notification);
       } catch (error) {
         console.error('Error handling foreground notification:', error);
       }
     });
 
-    return () => {
-      unsubscribe();
-    };
-  }, []);
+    return unsubscribe;
+  }, [handleIncomingNotification]);
 
-  // Listen for storage events from service worker (background notifications)
+  // Background notification listener
   useEffect(() => {
-    const handleStorageMessage = async (event: MessageEvent) => {
-      if (event.data && event.data.type === 'BACKGROUND_NOTIFICATION') {
-        const notification: Notification = event.data.notification;
-        await storage.save(notification);
-        
-        // Manually reload notifications to update the count immediately
-        const updated = await storage.getAll();
-        setNotifications(updated);
-        
-        // Show toast notification
-        const toastId = toast(
-          <div className="py-1">
-            <div 
-              className={notification.url ? "cursor-pointer" : ""}
-              onClick={() => {
-                if (notification.url) {
-                  window.location.href = notification.url;
-                  toast.dismiss(toastId);
-                }
-              }}
-            >
-              <div className="text-sm line-clamp-2">{notification.body || notification.title}</div>
-            </div>
-            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/30">
-              <button
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  await storage.markAsRead(notification.id);
-                  const updated = await storage.getAll();
-                  setNotifications(updated);
-                  toast.dismiss(toastId);
-                }}
-                className="text-xs text-white/90 hover:text-white font-medium px-2 py-0.5 hover:bg-white/10 rounded transition-colors"
-              >
-                Mark as read
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toast.dismiss(toastId);
-                }}
-                className="text-xs text-white/90 hover:text-white font-medium px-2 py-0.5 hover:bg-white/10 rounded transition-colors ml-auto"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>,
-          {
-            position: 'top-right',
-            autoClose: 2000,
-            hideProgressBar: true,
-            closeOnClick: false,
-            pauseOnHover: true,
-            draggable: true,
-            style: { 
-              cursor: notification.url ? 'pointer' : 'default',
-              background: 'linear-gradient(to right, #041D75, #083BF9)',
-              color: 'white',
-              padding: '12px 16px'
-            },
-            className: 'custom-toast'
-          }
-        );
-        
-        setIsAnimating(true);
-        setTimeout(() => setIsAnimating(false), 1000);
+    const handleBackgroundNotification = async (event: MessageEvent) => {
+      if (event.data?.type === 'BACKGROUND_NOTIFICATION') {
+        await handleIncomingNotification(event.data.notification);
       }
     };
 
-    // Listen for messages from service worker
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.ready.then((registration) => {
-        // Service worker is ready
-      });
-      
-      navigator.serviceWorker.addEventListener('message', handleStorageMessage);
+      navigator.serviceWorker.addEventListener('message', handleBackgroundNotification);
     }
-    
-    // Also listen on window for broader compatibility
-    window.addEventListener('message', handleStorageMessage);
-    
+    window.addEventListener('message', handleBackgroundNotification);
+
     return () => {
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.removeEventListener('message', handleStorageMessage);
+        navigator.serviceWorker.removeEventListener('message', handleBackgroundNotification);
       }
-      window.removeEventListener('message', handleStorageMessage);
+      window.removeEventListener('message', handleBackgroundNotification);
     };
-  }, []);
+  }, [handleIncomingNotification]);
 
-  // Close panel when clicking outside
+  // Close on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
@@ -689,24 +492,19 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
     };
 
     document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
-  const unreadCount = storage.getUnreadCount(notifications);
-
+  // Handlers
   const handleNotificationClick = async (notification: Notification) => {
-    // Mark as read
     if (!notification.read) {
       await storage.markAsRead(notification.id);
     }
-    
-    // Navigate if URL exists
+
     if (notification.url) {
       window.location.href = notification.url;
     }
-    
+
     setIsOpen(false);
   };
 
@@ -715,10 +513,14 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
     await storage.markAsRead(notificationId);
   };
 
-  const handleMarkAllAsRead = async () => {
-    // Clear all notifications (both read and unread)
+  const handleDeleteNotification = async (e: React.MouseEvent, notificationId: string) => {
+    e.stopPropagation();
+    await storage.deleteNotification(notificationId);
+    await loadNotifications();
+  };
+
+  const handleClearAll = async () => {
     await storage.deleteAll();
-    // Reload notifications
     await loadNotifications();
   };
 
@@ -729,6 +531,8 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
       return 'Just now';
     }
   };
+
+  const unreadCount = storage.getUnreadCount(notifications);
 
   return (
     <>
@@ -751,11 +555,11 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
       {isOpen && (
         <div className="fixed inset-0 z-50 pointer-events-none">
           {/* Backdrop */}
-          <div 
+          <div
             className="absolute inset-0 bg-black/20 pointer-events-auto"
             onClick={() => setIsOpen(false)}
           />
-          
+
           {/* Panel */}
           <div
             ref={panelRef}
@@ -775,7 +579,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
               <div className="flex items-center gap-2">
                 {notifications.length > 0 && (
                   <button
-                    onClick={handleMarkAllAsRead}
+                    onClick={handleClearAll}
                     className="text-sm hover:underline"
                   >
                     Clear all
@@ -803,21 +607,19 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
                   {notifications.map((notification) => (
                     <div
                       key={notification.id}
-                      className={`group p-4 transition-colors ${
-                        notification.read
+                      className={`group p-4 transition-colors ${notification.read
                           ? 'bg-white hover:bg-gray-50'
                           : 'bg-blue-50 hover:bg-blue-100'
-                      }`}
+                        }`}
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div 
+                        <div
                           className="flex-1 min-w-0 cursor-pointer"
                           onClick={() => handleNotificationClick(notification)}
                         >
                           <h4
-                            className={`text-base mb-1 ${
-                              notification.read ? 'font-normal' : 'font-semibold'
-                            } text-gray-900`}
+                            className={`text-base mb-1 ${notification.read ? 'font-normal' : 'font-semibold'
+                              } text-gray-900`}
                           >
                             {notification.title}
                           </h4>
@@ -839,12 +641,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
                           </div>
                         </div>
                         <button
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            await storage.deleteNotification(notification.id);
-                            const updated = await storage.getAll();
-                            setNotifications(updated);
-                          }}
+                          onClick={(e) => handleDeleteNotification(e, notification.id)}
                           className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 hover:text-red-600 rounded transition-all"
                           aria-label="Clear notification"
                           title="Clear notification"
