@@ -65,7 +65,6 @@ class FirebaseUtil {
 class NotificationStorage {
   private userId: string | null = null;
   private isDev: boolean = isDevelopment;
-  private unsubscribe: (() => void) | null = null;
   private readonly STORAGE_KEY = 'notifications';
   private readonly MAX_NOTIFICATIONS = 100;
 
