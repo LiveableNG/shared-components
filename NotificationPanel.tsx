@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { onMessage } from 'firebase/messaging';
-import { messaging } from '@/config/firebase';
+import { onMessage, getMessaging } from 'firebase/messaging';
 import { Bell, X, ChevronLeft, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'react-toastify';
@@ -34,6 +33,7 @@ interface Notification {
 class FirebaseUtil {
   private static app: any = null;
   private static db: any = null;
+  private static messagingInstance: any = null;
 
   static async getFirebaseApp() {
     if (this.app) return this.app;
@@ -58,6 +58,15 @@ class FirebaseUtil {
     this.db = getFirestore(this.app);
     
     return this.db;
+  }
+
+  static async getMessaging() {
+    if (this.messagingInstance) return this.messagingInstance;
+
+    await this.getFirebaseApp();
+    this.messagingInstance = getMessaging(this.app);
+    
+    return this.messagingInstance;
   }
 }
 
@@ -484,26 +493,41 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
 
   // Foreground message listener
   useEffect(() => {
-    const unsubscribe = onMessage(messaging, async (payload: any) => {
+    let unsubscribe: (() => void) | null = null;
+
+    const setupMessageListener = async () => {
       try {
-        const notification: Notification = {
-          id: payload.messageId || `${Date.now()}-${Math.random()}`,
-          title: payload.notification?.title || payload.data?.title || 'Notification',
-          body: payload.notification?.body || payload.data?.body || '',
-          url: payload.fcmOptions?.link || payload.notification?.click_action || payload.data?.url,
-          data: payload.data,
-          timestamp: Date.now(),
-          read: false,
-          severity: payload.data?.severity || 'info'
-        };
+        const messaging = await FirebaseUtil.getMessaging();
+        unsubscribe = onMessage(messaging, async (payload: any) => {
+          try {
+            const notification: Notification = {
+              id: payload.messageId || `${Date.now()}-${Math.random()}`,
+              title: payload.notification?.title || payload.data?.title || 'Notification',
+              body: payload.notification?.body || payload.data?.body || '',
+              url: payload.fcmOptions?.link || payload.notification?.click_action || payload.data?.url,
+              data: payload.data,
+              timestamp: Date.now(),
+              read: false,
+              severity: payload.data?.severity || 'info'
+            };
 
-        await handleIncomingNotification(notification);
+            await handleIncomingNotification(notification);
+          } catch (error) {
+            console.error('Error handling foreground notification:', error);
+          }
+        });
       } catch (error) {
-        console.error('Error handling foreground notification:', error);
+        console.error('Error setting up messaging listener:', error);
       }
-    });
+    };
 
-    return unsubscribe;
+    setupMessageListener();
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, [handleIncomingNotification]);
 
   // Background notification listener
