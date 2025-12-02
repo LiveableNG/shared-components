@@ -17,6 +17,16 @@ const FIREBASE_CONFIG = {
   measurementId: "G-LK0R46B22N"
 };
 
+// Generate a unique device ID for this browser instance
+const getDeviceId = (): string => {
+  let deviceId = localStorage.getItem('notification_device_id');
+  if (!deviceId) {
+    deviceId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem('notification_device_id', deviceId);
+  }
+  return deviceId;
+};
+
 // Notification interface
 interface Notification {
   id: string;
@@ -27,6 +37,7 @@ interface Notification {
   timestamp: number;
   read: boolean;
   severity?: 'success' | 'error' | 'warning' | 'info';
+  receivedByDeviceId?: string; // Track which device received the push notification
 }
 
 // Firebase Utilities
@@ -477,18 +488,30 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
   }, []);
 
   // Handle incoming notification
-  const handleIncomingNotification = useCallback(async (notification: Notification) => {
-    await storage.save(notification);
+  // showToast: only show toast if this device received the push (not from Firestore sync)
+  const handleIncomingNotification = useCallback(async (notification: Notification, showToast: boolean = true) => {
+    // Mark which device received this notification
+    const deviceId = getDeviceId();
+    const notificationWithDevice = {
+      ...notification,
+      receivedByDeviceId: notification.receivedByDeviceId || deviceId
+    };
+    
+    await storage.save(notificationWithDevice);
     const updated = await storage.getAll();
     setNotifications(updated);
     
-    showNotificationToast(notification, async () => {
-      await storage.markAsRead(notification.id);
-      const refreshed = await storage.getAll();
-      setNotifications(refreshed);
-    });
-    
-    triggerBellAnimation();
+    // Only show toast if this device received the push notification
+    // Don't show toast for notifications synced from Firestore (other devices)
+    if (showToast && notificationWithDevice.receivedByDeviceId === deviceId) {
+      showNotificationToast(notificationWithDevice, async () => {
+        await storage.markAsRead(notificationWithDevice.id);
+        const refreshed = await storage.getAll();
+        setNotifications(refreshed);
+      });
+      
+      triggerBellAnimation();
+    }
   }, [triggerBellAnimation]);
 
   // Set user ID
@@ -497,14 +520,19 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
     loadNotifications();
   }, [userId, loadNotifications]);
 
-  // Subscribe to storage updates
+  // Subscribe to storage updates (Firestore sync)
+  // This updates the UI when notifications are synced from other devices
+  // but does NOT trigger toasts (to prevent duplicates)
   useEffect(() => {
     if (!userId) {
       setNotifications([]);
       return;
     }
     
-    const unsubscribe = storage.subscribe(setNotifications);
+    const unsubscribe = storage.subscribe((syncedNotifications) => {
+      // Just update the state, don't show toasts for synced notifications
+      setNotifications(syncedNotifications);
+    });
     return unsubscribe;
   }, [userId]);
 
@@ -550,10 +578,12 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
               data: payload.data,
               timestamp: Date.now(),
               read: false,
-              severity: payload.data?.severity || 'info'
+              severity: payload.data?.severity || 'info',
+              receivedByDeviceId: getDeviceId() // Mark this device as the receiver
             };
 
-            await handleIncomingNotification(notification);
+            // Show toast since this device received the push
+            await handleIncomingNotification(notification, true);
           } catch (error) {
             console.error('Error handling foreground notification:', error);
           }
@@ -611,7 +641,15 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
       const messageEvent = event as MessageEvent;
       if (messageEvent.data?.type === 'BACKGROUND_NOTIFICATION' || messageEvent.data?.type === 'FOREGROUND_NOTIFICATION') {
         console.log('Notification received from service worker:', messageEvent.data);
-        await handleIncomingNotification(messageEvent.data.notification);
+        
+        // Mark this device as the receiver and show toast
+        const notification = {
+          ...messageEvent.data.notification,
+          receivedByDeviceId: getDeviceId()
+        };
+        
+        // Show toast since this device received the push via service worker
+        await handleIncomingNotification(notification, true);
       }
     };
 
