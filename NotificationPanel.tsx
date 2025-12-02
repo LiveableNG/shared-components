@@ -63,10 +63,27 @@ class FirebaseUtil {
   static async getMessaging() {
     if (this.messagingInstance) return this.messagingInstance;
 
-    await this.getFirebaseApp();
-    this.messagingInstance = getMessaging(this.app);
-    
-    return this.messagingInstance;
+    // Check if messaging is supported
+    if (typeof window === 'undefined') {
+      throw new Error('Messaging is only available in browser environment');
+    }
+
+    if (!('Notification' in window) && !('serviceWorker' in navigator)) {
+      console.warn('Firebase Cloud Messaging is not supported in this browser');
+      return null;
+    }
+
+    try {
+      await this.getFirebaseApp();
+      this.messagingInstance = getMessaging(this.app);
+      
+      return this.messagingInstance;
+    } catch (error) {
+      console.error('Error initializing Firebase Messaging:', error);
+      // If messaging fails, return null instead of throwing
+      // This allows the app to continue working without messaging
+      return null;
+    }
   }
 }
 
@@ -493,13 +510,38 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
 
   // Foreground message listener
   useEffect(() => {
+    if (!userId) return; // Don't set up listener if no user
+    
     let unsubscribe: (() => void) | null = null;
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000;
 
     const setupMessageListener = async () => {
       try {
+        // Check if page is visible - onMessage only works when page is in foreground
+        if (document.hidden) {
+          console.log('Page is hidden, skipping foreground listener setup');
+          return;
+        }
+
         const messaging = await FirebaseUtil.getMessaging();
+        
+        if (!messaging) {
+          console.warn('Firebase Messaging not available, skipping foreground listener');
+          return;
+        }
+
+        // Verify messaging is properly initialized
+        if (typeof messaging !== 'object' || !messaging) {
+          console.error('Invalid messaging instance');
+          return;
+        }
+
         unsubscribe = onMessage(messaging, async (payload: any) => {
           try {
+            console.log('Foreground message received via onMessage:', payload);
+            
             const notification: Notification = {
               id: payload.messageId || `${Date.now()}-${Math.random()}`,
               title: payload.notification?.title || payload.data?.title || 'Notification',
@@ -516,40 +558,92 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
             console.error('Error handling foreground notification:', error);
           }
         });
-      } catch (error) {
+
+        console.log('Foreground message listener set up successfully');
+      } catch (error: any) {
         console.error('Error setting up messaging listener:', error);
+        
+        // Retry logic for production environments
+        if (retryCount < MAX_RETRIES && error?.code !== 'messaging/unsupported-browser') {
+          retryCount++;
+          console.log(`Retrying messaging setup (${retryCount}/${MAX_RETRIES})...`);
+          setTimeout(setupMessageListener, RETRY_DELAY * retryCount);
+        } else {
+          console.error('Failed to set up messaging listener after retries');
+        }
       }
     };
 
-    setupMessageListener();
+    // Handle visibility change - re-setup listener when page becomes visible
+    const handleVisibilityChange = () => {
+      if (!document.hidden && !unsubscribe) {
+        console.log('Page became visible, setting up message listener');
+        setupMessageListener();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Small delay to ensure Firebase is fully initialized
+    const timeoutId = setTimeout(() => {
+      setupMessageListener();
+    }, 500); // Increased delay for production environments
 
     return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (unsubscribe) {
-        unsubscribe();
+        try {
+          unsubscribe();
+        } catch (error) {
+          console.error('Error unsubscribing from messaging:', error);
+        }
       }
     };
-  }, [handleIncomingNotification]);
+  }, [handleIncomingNotification, userId]);
 
-  // Background notification listener
+  // Background notification listener (also handles foreground messages from service worker)
   useEffect(() => {
-    const handleBackgroundNotification = async (event: MessageEvent) => {
-      if (event.data?.type === 'BACKGROUND_NOTIFICATION') {
-        await handleIncomingNotification(event.data.notification);
+    if (!userId) return;
+
+    const handleBackgroundNotification = async (event: Event | MessageEvent) => {
+      // Handle both background and foreground notifications from service worker
+      const messageEvent = event as MessageEvent;
+      if (messageEvent.data?.type === 'BACKGROUND_NOTIFICATION' || messageEvent.data?.type === 'FOREGROUND_NOTIFICATION') {
+        console.log('Notification received from service worker:', messageEvent.data);
+        await handleIncomingNotification(messageEvent.data.notification);
       }
     };
 
+    // Listen to service worker messages
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.addEventListener('message', handleBackgroundNotification);
+      const messageHandler = handleBackgroundNotification as EventListener;
+      navigator.serviceWorker.addEventListener('message', messageHandler);
+      
+      // Also listen for messages when service worker is ready
+      navigator.serviceWorker.ready.then((registration) => {
+        if (registration.active) {
+          registration.active.addEventListener('message', messageHandler);
+        }
+      });
     }
-    window.addEventListener('message', handleBackgroundNotification);
+    
+    // Fallback: listen to window messages
+    window.addEventListener('message', handleBackgroundNotification as EventListener);
     
     return () => {
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.removeEventListener('message', handleBackgroundNotification);
+        const messageHandler = handleBackgroundNotification as EventListener;
+        navigator.serviceWorker.removeEventListener('message', messageHandler);
+        navigator.serviceWorker.ready.then((registration) => {
+          if (registration.active) {
+            registration.active.removeEventListener('message', messageHandler);
+          }
+        });
       }
-      window.removeEventListener('message', handleBackgroundNotification);
+      window.removeEventListener('message', handleBackgroundNotification as EventListener);
     };
-  }, [handleIncomingNotification]);
+  }, [handleIncomingNotification, userId]);
 
   // Close on outside click
   useEffect(() => {
