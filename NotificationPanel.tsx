@@ -27,6 +27,53 @@ const getDeviceId = (): string => {
   return deviceId;
 };
 
+// Get the current environment (uat, staging, production, etc.)
+const getEnvironment = (): string => {
+  // Derive from API URL - matches your environment patterns:
+  // STAGING: api-staging
+  // UAT: api-uat
+  // PROD: api
+  const apiUrl = import.meta.env.VITE_APP_API_URL || '';
+  if (apiUrl) {
+    const url = apiUrl.toLowerCase();
+    // Check for staging pattern (api-staging)
+    if (url.includes('api-staging')) {
+      return 'staging';
+    }
+    // Check for UAT pattern (api-uat)
+    if (url.includes('api-uat')) {
+      return 'uat';
+    }
+    // Check for dev/development patterns
+    if (url.includes('dev') || url.includes('development') || url.includes('localhost')) {
+      return 'dev';
+    }
+  }
+  
+  // Derive from hostname as fallback - matches your environment patterns:
+  // STAGING: app-staging
+  // UAT: app-uat
+  // PROD: app
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname.toLowerCase();
+    // Check for staging pattern (app-staging)
+    if (hostname.includes('app-staging')) {
+      return 'staging';
+    }
+    // Check for UAT pattern (app-uat)
+    if (hostname.includes('app-uat')) {
+      return 'uat';
+    }
+    // Check for dev patterns
+    if (hostname.includes('dev') || hostname.includes('localhost')) {
+      return 'dev';
+    }
+  }
+  
+  // Default to production (matches api. and app. patterns)
+  return 'production';
+};
+
 // Notification interface
 interface Notification {
   id: string;
@@ -106,7 +153,13 @@ class NotificationStorage {
   private readonly MAX_NOTIFICATIONS = 100;
 
   setUserId(userId: string | null) {
-    this.userId = userId;
+    // Append environment to userId to ensure uniqueness across environments
+    if (userId) {
+      const environment = getEnvironment();
+      this.userId = `${userId}_${environment}`;
+    } else {
+      this.userId = null;
+    }
   }
 
   // LocalStorage Methods
