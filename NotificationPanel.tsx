@@ -488,7 +488,8 @@ const createNotificationToast = (
 };
 
 const showNotificationToast = (notification: Notification, onMarkAsRead: () => void) => {
-  const toastId = toast(
+  let toastId: ReturnType<typeof toast>;
+  toastId = toast(
     createNotificationToast(
       notification,
       onMarkAsRead,
