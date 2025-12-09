@@ -363,7 +363,14 @@ const NotificationPanel: React.FC<{ userId?: string | null; className?: string }
                   >
                     {/* Content */}
                     <div
-                      onClick={() => !n.read && markAsRead(n.id)}
+                      onClick={async () => {
+                        if (!n.read) {
+                          await markAsRead(n.id);
+                        }
+                        if (n.url) {
+                          window.location.href = n.url;
+                        }
+                      }}
                       className="flex-1 min-w-0 cursor-pointer"
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -381,10 +388,10 @@ const NotificationPanel: React.FC<{ userId?: string | null; className?: string }
                           <Trash2 size={16} />
                         </button>
                       </div>
-                      <p className="text-xs text-gray-600 mt-1.5 leading-relaxed line-clamp-2">
+                      <p className="text-xs text-gray-600 leading-relaxed line-clamp-2">
                         {n.body}
                       </p>
-                      <div className="flex items-center justify-between mt-3">
+                      <div className="flex items-center justify-between mt-2">
                         <span className="text-xs text-gray-400">
                           {formatTime(n.timestamp)}
                         </span>
