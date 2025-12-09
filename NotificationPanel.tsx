@@ -1,12 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { onMessage, getMessaging } from 'firebase/messaging';
+import React, { useState, useEffect, useRef } from 'react';
 import { Bell, X, ChevronLeft, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'react-toastify';
 
-// Configuration
-const isDevelopment = false;
-
+// ✅ ENV
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBdGMDTVi440pxEKCS1qKHb2hOxbuZTEzo",
   authDomain: "goodtenants-a685f.firebaseapp.com",
@@ -14,917 +11,400 @@ const FIREBASE_CONFIG = {
   storageBucket: "goodtenants-a685f.firebasestorage.app",
   messagingSenderId: "140112142464",
   appId: "1:140112142464:web:3c8474046e9735535ec665",
-  measurementId: "G-LK0R46B22N"
 };
 
-// Generate a unique device ID for this browser instance
-const getDeviceId = (): string => {
-  let deviceId = localStorage.getItem('notification_device_id');
-  if (!deviceId) {
-    deviceId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    localStorage.setItem('notification_device_id', deviceId);
-  }
-  return deviceId;
-};
-
-// Get the current environment (uat, staging, production, etc.)
-const getEnvironment = (): string => {
-  // Derive from API URL - matches your environment patterns:
-  // STAGING: api-staging
-  // UAT: api-uat
-  // PROD: api
-  const apiUrl = import.meta.env.VITE_APP_API_URL || '';
-  if (apiUrl) {
-    const url = apiUrl.toLowerCase();
-    // Check for staging pattern (api-staging)
-    if (url.includes('api-staging')) {
-      return 'staging';
-    }
-    // Check for UAT pattern (api-uat)
-    if (url.includes('api-uat')) {
-      return 'uat';
-    }
-    // Check for dev/development patterns
-    if (url.includes('dev') || url.includes('development') || url.includes('localhost')) {
-      return 'dev';
-    }
-  }
-  
-  // Derive from hostname as fallback - matches your environment patterns:
-  // STAGING: app-staging
-  // UAT: app-uat
-  // PROD: app
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname.toLowerCase();
-    // Check for staging pattern (app-staging)
-    if (hostname.includes('app-staging')) {
-      return 'staging';
-    }
-    // Check for UAT pattern (app-uat)
-    if (hostname.includes('app-uat')) {
-      return 'uat';
-    }
-    // Check for dev patterns
-    if (hostname.includes('dev') || hostname.includes('localhost')) {
-      return 'dev';
-    }
-  }
-  
-  // Default to production (matches api. and app. patterns)
+// ✅ ENV DETECTOR
+const getEnvironment = () => {
+  const hostname = window.location.hostname.toLowerCase();
+  if (hostname.includes('staging')) return 'staging';
+  if (hostname.includes('uat')) return 'uat';
+  if (hostname.includes('dev') || hostname.includes('localhost')) return 'dev';
   return 'production';
 };
 
-// Notification interface
+// ✅ TYPES
 interface Notification {
   id: string;
   title: string;
   body: string;
   url?: string;
-  data?: any;
   timestamp: number;
   read: boolean;
   severity?: 'success' | 'error' | 'warning' | 'info';
-  receivedByDeviceId?: string; // Track which device received the push notification
 }
 
-// Firebase Utilities
+// ✅ FIREBASE
 class FirebaseUtil {
-  private static app: any = null;
-  private static db: any = null;
-  private static messagingInstance: any = null;
-
-  static async getFirebaseApp() {
-    if (this.app) return this.app;
-
-    const { initializeApp, getApps } = await import('firebase/app');
-    const apps = getApps();
-    
-    if (apps.length > 0) {
-      this.app = apps[0];
-    } else {
-      this.app = initializeApp(FIREBASE_CONFIG);
-    }
-    
-    return this.app;
-  }
+  static app: any;
+  static db: any;
 
   static async getFirestore() {
     if (this.db) return this.db;
 
-    await this.getFirebaseApp();
+    const { initializeApp, getApps } = await import('firebase/app');
+    if (!getApps().length) initializeApp(FIREBASE_CONFIG);
+
     const { getFirestore } = await import('firebase/firestore');
-    this.db = getFirestore(this.app);
-    
+    this.db = getFirestore();
     return this.db;
   }
-
-  static async getMessaging() {
-    if (this.messagingInstance) return this.messagingInstance;
-
-    // Check if messaging is supported
-    if (typeof window === 'undefined') {
-      throw new Error('Messaging is only available in browser environment');
-    }
-
-    if (!('Notification' in window) && !('serviceWorker' in navigator)) {
-      console.warn('Firebase Cloud Messaging is not supported in this browser');
-      return null;
-    }
-
-    try {
-      await this.getFirebaseApp();
-      this.messagingInstance = getMessaging(this.app);
-      
-      return this.messagingInstance;
-    } catch (error) {
-      console.error('Error initializing Firebase Messaging:', error);
-      // If messaging fails, return null instead of throwing
-      // This allows the app to continue working without messaging
-      return null;
-    }
-  }
 }
 
-// Storage Service
-class NotificationStorage {
-  private userId: string | null = null;
-  private isDev: boolean = isDevelopment;
-  private readonly STORAGE_KEY = 'notifications';
-  private readonly MAX_NOTIFICATIONS = 100;
-
-  setUserId(userId: string | null) {
-    // Append environment to userId to ensure uniqueness across environments
-    if (userId) {
-      const environment = getEnvironment();
-      this.userId = `${userId}_${environment}`;
-    } else {
-      this.userId = null;
-    }
-  }
-
-  // LocalStorage Methods
-  private saveToLocalStorage(notification: Notification): void {
-    const existing = this.loadFromLocalStorage();
-    existing.unshift(notification);
-    const trimmed = existing.slice(0, this.MAX_NOTIFICATIONS);
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(trimmed));
-    this.triggerStorageUpdate();
-  }
-
-  private loadFromLocalStorage(): Notification[] {
-    try {
-      const data = localStorage.getItem(this.STORAGE_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch (error) {
-      console.error('Error loading from localStorage:', error);
-      return [];
-    }
-  }
-
-  private updateInLocalStorage(notificationId: string, updates: Partial<Notification>): void {
-    const existing = this.loadFromLocalStorage();
-    const index = existing.findIndex(n => n.id === notificationId);
+// ✅ BEEP SOUND
+const playBeep = () => {
+  try {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     
-    if (index !== -1) {
-      existing[index] = { ...existing[index], ...updates };
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(existing));
-      this.triggerStorageUpdate();
-    }
-  }
+    const playSingleBeep = (startTime: number) => {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
 
-  private deleteFromLocalStorage(notificationIds: string[]): void {
-    const existing = this.loadFromLocalStorage();
-    const filtered = existing.filter(n => !notificationIds.includes(n.id));
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(filtered));
-    this.triggerStorageUpdate();
-  }
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
 
-  private triggerStorageUpdate(): void {
-    window.dispatchEvent(new Event('notification-storage-updated'));
-  }
+      oscillator.frequency.value = 800; // Beep frequency in Hz
+      oscillator.type = 'sine';
 
-  // Firestore Methods
-  private async saveToFirestore(notification: Notification): Promise<void> {
-    if (!this.userId) return;
+      gainNode.gain.setValueAtTime(0.3, startTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 0.15);
+
+      oscillator.start(startTime);
+      oscillator.stop(startTime + 0.15);
+    };
+
+    // Play first beep
+    playSingleBeep(audioContext.currentTime);
     
-    try {
-      const db = await FirebaseUtil.getFirestore();
-      const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
-      
-      // Use setDoc with the notification ID as the document ID to ensure they match
-      await setDoc(doc(db, `users/${this.userId}/notifications/${notification.id}`), {
-        ...notification,
-        timestamp: serverTimestamp()
-      });
-    } catch (error) {
-      console.error('Error saving to Firestore:', error);
-      this.saveToLocalStorage(notification);
-    }
+    // Play second beep after a short delay
+    playSingleBeep(audioContext.currentTime + 0.2);
+  } catch (error) {
+    // Fallback: try using a simple audio element if Web Audio API fails
+    console.debug('Web Audio API not available, skipping beep');
   }
-
-  private async loadFromFirestore(): Promise<Notification[]> {
-    if (!this.userId) return [];
-    
-    try {
-      const db = await FirebaseUtil.getFirestore();
-      const { collection, query, orderBy, limit, getDocs } = await import('firebase/firestore');
-      
-      const q = query(
-        collection(db, `users/${this.userId}/notifications`),
-        orderBy('timestamp', 'desc'),
-        limit(this.MAX_NOTIFICATIONS)
-      );
-      
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          ...data,
-          id: doc.id, // Ensure doc.id takes precedence over any id in the document data
-          timestamp: data.timestamp?.toMillis() || Date.now()
-        } as Notification;
-      });
-    } catch (error) {
-      console.error('Error loading from Firestore:', error);
-      return [];
-    }
-  }
-
-  private async updateInFirestore(notificationId: string, updates: Partial<Notification>): Promise<void> {
-    if (!this.userId) return;
-    
-    try {
-      const db = await FirebaseUtil.getFirestore();
-      const { doc, updateDoc } = await import('firebase/firestore');
-      
-      await updateDoc(doc(db, `users/${this.userId}/notifications/${notificationId}`), updates);
-    } catch (error) {
-      console.error('Error updating in Firestore:', error);
-      this.updateInLocalStorage(notificationId, updates);
-    }
-  }
-
-  private async deleteFromFirestore(notificationIds: string[]): Promise<void> {
-    if (!this.userId || notificationIds.length === 0) return;
-    
-    try {
-      const db = await FirebaseUtil.getFirestore();
-      const { writeBatch, doc } = await import('firebase/firestore');
-      
-      const batch = writeBatch(db);
-      notificationIds.forEach(id => {
-        const ref = doc(db, `users/${this.userId}/notifications/${id}`);
-        batch.delete(ref);
-      });
-      
-      await batch.commit();
-    } catch (error) {
-      console.error('Error deleting from Firestore:', error);
-      this.deleteFromLocalStorage(notificationIds);
-    }
-  }
-
-  private async batchUpdateInFirestore(notificationIds: string[], updates: Partial<Notification>): Promise<void> {
-    if (!this.userId || notificationIds.length === 0) return;
-    
-    try {
-      const db = await FirebaseUtil.getFirestore();
-      const { writeBatch, doc } = await import('firebase/firestore');
-      
-      const batch = writeBatch(db);
-      notificationIds.forEach(id => {
-        const ref = doc(db, `users/${this.userId}/notifications/${id}`);
-        batch.update(ref, updates);
-      });
-      
-      await batch.commit();
-    } catch (error) {
-      console.error('Error batch updating in Firestore:', error);
-      for (const id of notificationIds) {
-        this.updateInLocalStorage(id, updates);
-      }
-    }
-  }
-
-  private async setupFirestoreListener(callback: (notifications: Notification[]) => void): Promise<() => void> {
-    if (!this.userId) return () => {};
-    
-    try {
-      const db = await FirebaseUtil.getFirestore();
-      const { collection, query, orderBy, limit, onSnapshot } = await import('firebase/firestore');
-      
-      const q = query(
-        collection(db, `users/${this.userId}/notifications`),
-        orderBy('timestamp', 'desc'),
-        limit(this.MAX_NOTIFICATIONS)
-      );
-      
-      return onSnapshot(q, (snapshot) => {
-        const notifications = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            ...data,
-            id: doc.id, // Ensure doc.id takes precedence over any id in the document data
-            timestamp: data.timestamp?.toMillis() || Date.now()
-          } as Notification;
-        });
-        callback(notifications);
-      }, (error) => {
-        console.error('Firestore listener error:', error);
-      });
-    } catch (error) {
-      console.error('Error setting up Firestore listener:', error);
-      return () => {};
-    }
-  }
-
-  // Public API
-  async save(notification: Notification): Promise<void> {
-    if (this.isDev) {
-      this.saveToLocalStorage(notification);
-    } else {
-      await this.saveToFirestore(notification);
-    }
-  }
-
-  async getAll(): Promise<Notification[]> {
-    return this.isDev ? this.loadFromLocalStorage() : await this.loadFromFirestore();
-  }
-
-  async markAsRead(notificationId: string): Promise<void> {
-    if (this.isDev) {
-      this.updateInLocalStorage(notificationId, { read: true });
-    } else {
-      await this.updateInFirestore(notificationId, { read: true });
-    }
-  }
-
-  async markAllAsRead(): Promise<void> {
-    const notifications = await this.getAll();
-    const unreadIds = notifications.filter(n => !n.read).map(n => n.id);
-    
-    if (unreadIds.length === 0) return;
-    
-    if (this.isDev) {
-      unreadIds.forEach(id => this.updateInLocalStorage(id, { read: true }));
-    } else {
-      await this.batchUpdateInFirestore(unreadIds, { read: true });
-    }
-  }
-
-  async deleteNotification(notificationId: string): Promise<void> {
-    if (this.isDev) {
-      this.deleteFromLocalStorage([notificationId]);
-    } else {
-      await this.deleteFromFirestore([notificationId]);
-    }
-  }
-
-  async deleteAllRead(): Promise<void> {
-    const notifications = await this.getAll();
-    const readIds = notifications.filter(n => n.read).map(n => n.id);
-    
-    if (readIds.length === 0) return;
-    
-    if (this.isDev) {
-      this.deleteFromLocalStorage(readIds);
-    } else {
-      await this.deleteFromFirestore(readIds);
-    }
-  }
-
-  async deleteAll(): Promise<void> {
-    const notifications = await this.getAll();
-    const allIds = notifications.map(n => n.id);
-    
-    if (allIds.length === 0) return;
-    
-    if (this.isDev) {
-      this.deleteFromLocalStorage(allIds);
-    } else {
-      await this.deleteFromFirestore(allIds);
-    }
-  }
-
-  subscribe(callback: (notifications: Notification[]) => void): () => void {
-    if (this.isDev) {
-      const handleUpdate = async () => {
-        const notifications = await this.getAll();
-        callback(notifications);
-      };
-      
-      window.addEventListener('notification-storage-updated', handleUpdate);
-      handleUpdate();
-      
-      return () => {
-        window.removeEventListener('notification-storage-updated', handleUpdate);
-      };
-    } else {
-      let unsubscribe: (() => void) | null = null;
-      
-      this.setupFirestoreListener(callback).then(unsub => {
-        unsubscribe = unsub;
-      });
-      
-      return () => {
-        if (unsubscribe) {
-          unsubscribe();
-        }
-      };
-    }
-  }
-
-  getUnreadCount(notifications: Notification[]): number {
-    return notifications.filter(n => !n.read).length;
-  }
-}
-
-// Singleton instance
-const storage = new NotificationStorage();
-
-// Toast Notification Component
-const createNotificationToast = (
-  notification: Notification,
-  onMarkAsRead: () => void,
-  onDismiss: () => void
-) => {
-  const handleClick = () => {
-    if (notification.url) {
-      window.location.href = notification.url;
-      onDismiss();
-    }
-  };
-
-  return (
-    <div className="py-1">
-      <div 
-        className={notification.url ? "cursor-pointer" : ""}
-        onClick={handleClick}
-      >
-        <div className="text-sm line-clamp-2">{notification.body || notification.title}</div>
-      </div>
-      <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/30">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onMarkAsRead();
-          }}
-          className="text-xs text-white/90 hover:text-white font-medium px-2 py-0.5 hover:bg-white/10 rounded transition-colors"
-        >
-          Mark as read
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDismiss();
-          }}
-          className="text-xs text-white/90 hover:text-white font-medium px-2 py-0.5 hover:bg-white/10 rounded transition-colors ml-auto"
-        >
-          Dismiss
-        </button>
-      </div>
-    </div>
-  );
 };
 
-const showNotificationToast = (notification: Notification, onMarkAsRead: () => void) => {
+// ✅ MODERN TOAST
+const showModernToast = (notification: Notification, onMarkAsRead: () => void) => {
   let toastId: ReturnType<typeof toast>;
+
   toastId = toast(
-    createNotificationToast(
-      notification,
-      onMarkAsRead,
-      () => toast.dismiss(toastId)
-    ),
+    <div className="flex items-start gap-3">
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-gray-900 leading-snug">
+          {notification.title}
+        </p>
+
+        {notification.body && (
+          <p className="mt-0.5 text-sm text-gray-600 line-clamp-2">
+            {notification.body}
+          </p>
+        )}
+
+        {/* Actions */}
+        <div className="mt-3 flex items-center gap-4">
+          {!notification.read && (
+            <button
+              onClick={async () => {
+                await onMarkAsRead();
+                toast.dismiss(toastId);
+              }}
+              className="text-xs font-medium text-blue-600 hover:underline"
+            >
+              Mark as read
+            </button>
+          )}
+
+          {notification.url && (
+            <button
+              onClick={() => {
+                window.location.href = notification.url!;
+                toast.dismiss(toastId);
+              }}
+              className="text-xs font-medium text-gray-600 hover:underline"
+            >
+              Open
+            </button>
+          )}
+
+          <button
+            onClick={() => toast.dismiss(toastId)}
+            className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>,
     {
       position: 'top-right',
-      autoClose: 2000,
-      hideProgressBar: true,
+      autoClose: 4500,
       closeOnClick: false,
       pauseOnHover: true,
       draggable: true,
-      style: { 
-        cursor: notification.url ? 'pointer' : 'default',
-        background: 'linear-gradient(to right, #041D75, #083BF9)',
-        color: 'white',
-        padding: '12px 16px'
-      },
-      className: 'custom-toast'
+      hideProgressBar: true,
+      style: {
+        background: '#ffffff',
+        color: '#111827',
+        borderRadius: '14px',
+        boxShadow: '0 10px 25px rgba(0,0,0,0.12)',
+        padding: '14px 16px'
+      }
     }
   );
 };
 
-// Main Component
-interface NotificationPanelProps {
-  userId?: string | null;
-  className?: string;
-}
-
-const NotificationPanel: React.FC<NotificationPanelProps> = ({ 
-  userId, 
-  className = '' 
+// ✅ MAIN PANEL
+const NotificationPanel: React.FC<{ userId?: string | null; className?: string }> = ({
+  userId,
+  className = ''
 }) => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
+
   const panelRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
 
-  // Load notifications
-  const loadNotifications = useCallback(async () => {
-    const loaded = await storage.getAll();
-    setNotifications(loaded);
-  }, []);
-
-  // Trigger bell animation
-  const triggerBellAnimation = useCallback(() => {
-    setIsAnimating(true);
-    setTimeout(() => setIsAnimating(false), 1000);
-  }, []);
-
-  // Handle incoming notification
-  // showToast: only show toast if this device received the push (not from Firestore sync)
-  const handleIncomingNotification = useCallback(async (notification: Notification, showToast: boolean = true) => {
-    // Mark which device received this notification
-    const deviceId = getDeviceId();
-    const notificationWithDevice = {
-      ...notification,
-      receivedByDeviceId: notification.receivedByDeviceId || deviceId
-    };
-    
-    await storage.save(notificationWithDevice);
-    const updated = await storage.getAll();
-    setNotifications(updated);
-    
-    // Only show toast if this device received the push notification
-    // Don't show toast for notifications synced from Firestore (other devices)
-    if (showToast && notificationWithDevice.receivedByDeviceId === deviceId) {
-      showNotificationToast(notificationWithDevice, async () => {
-        await storage.markAsRead(notificationWithDevice.id);
-        const refreshed = await storage.getAll();
-        setNotifications(refreshed);
-      });
-      
-      triggerBellAnimation();
-    }
-  }, [triggerBellAnimation]);
-
-  // Set user ID
-  useEffect(() => {
-    storage.setUserId(userId || null);
-    loadNotifications();
-  }, [userId, loadNotifications]);
-
-  // Subscribe to storage updates (Firestore sync)
-  // This updates the UI when notifications are synced from other devices
-  // but does NOT trigger toasts (to prevent duplicates)
-  useEffect(() => {
-    if (!userId) {
-      setNotifications([]);
-      return;
-    }
-    
-    const unsubscribe = storage.subscribe((syncedNotifications) => {
-      // Just update the state, don't show toasts for synced notifications
-      setNotifications(syncedNotifications);
-    });
-    return unsubscribe;
-  }, [userId]);
-
-  // Foreground message listener
-  useEffect(() => {
-    if (!userId) return; // Don't set up listener if no user
-    
-    let unsubscribe: (() => void) | null = null;
-    let retryCount = 0;
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY = 1000;
-
-    const setupMessageListener = async () => {
-      try {
-        // Check if page is visible - onMessage only works when page is in foreground
-        if (document.hidden) {
-          console.log('Page is hidden, skipping foreground listener setup');
-          return;
-        }
-
-        const messaging = await FirebaseUtil.getMessaging();
-        
-        if (!messaging) {
-          console.warn('Firebase Messaging not available, skipping foreground listener');
-          return;
-        }
-
-        // Verify messaging is properly initialized
-        if (typeof messaging !== 'object' || !messaging) {
-          console.error('Invalid messaging instance');
-          return;
-        }
-
-        unsubscribe = onMessage(messaging, async (payload: any) => {
-          try {
-            console.log('Foreground message received via onMessage:', payload);
-            
-            const notification: Notification = {
-              id: payload.messageId || `${Date.now()}-${Math.random()}`,
-              title: payload.notification?.title || payload.data?.title || 'Notification',
-              body: payload.notification?.body || payload.data?.body || '',
-              url: payload.fcmOptions?.link || payload.notification?.click_action || payload.data?.url,
-              data: payload.data,
-              timestamp: Date.now(),
-              read: false,
-              severity: payload.data?.severity || 'info',
-              receivedByDeviceId: getDeviceId() // Mark this device as the receiver
-            };
-
-            // Show toast since this device received the push
-            await handleIncomingNotification(notification, true);
-          } catch (error) {
-            console.error('Error handling foreground notification:', error);
-          }
-        });
-
-        console.log('Foreground message listener set up successfully');
-      } catch (error: any) {
-        console.error('Error setting up messaging listener:', error);
-        
-        // Retry logic for production environments
-        if (retryCount < MAX_RETRIES && error?.code !== 'messaging/unsupported-browser') {
-          retryCount++;
-          console.log(`Retrying messaging setup (${retryCount}/${MAX_RETRIES})...`);
-          setTimeout(setupMessageListener, RETRY_DELAY * retryCount);
-        } else {
-          console.error('Failed to set up messaging listener after retries');
-        }
-      }
-    };
-
-    // Handle visibility change - re-setup listener when page becomes visible
-    const handleVisibilityChange = () => {
-      if (!document.hidden && !unsubscribe) {
-        console.log('Page became visible, setting up message listener');
-        setupMessageListener();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    // Small delay to ensure Firebase is fully initialized
-    const timeoutId = setTimeout(() => {
-      setupMessageListener();
-    }, 500); // Increased delay for production environments
-
-    return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (unsubscribe) {
-        try {
-          unsubscribe();
-        } catch (error) {
-          console.error('Error unsubscribing from messaging:', error);
-        }
-      }
-    };
-  }, [handleIncomingNotification, userId]);
-
-  // Background notification listener (also handles foreground messages from service worker)
+  // ✅ FIRESTORE LISTENER + TOAST DRIVER
   useEffect(() => {
     if (!userId) return;
 
-    const handleBackgroundNotification = async (event: Event | MessageEvent) => {
-      // Handle both background and foreground notifications from service worker
-      const messageEvent = event as MessageEvent;
-      if (messageEvent.data?.type === 'BACKGROUND_NOTIFICATION' || messageEvent.data?.type === 'FOREGROUND_NOTIFICATION') {
-        console.log('Notification received from service worker:', messageEvent.data);
-        
-        // Mark this device as the receiver and show toast
-        const notification = {
-          ...messageEvent.data.notification,
-          receivedByDeviceId: getDeviceId()
-        };
-        
-        // Show toast since this device received the push via service worker
-        await handleIncomingNotification(notification, true);
-      }
-    };
+    let isInitial = true;
+    let previousIds = new Set<string>();
+    let unsubscribe: (() => void) | null = null;
 
-    // Listen to service worker messages
-    if ('serviceWorker' in navigator) {
-      const messageHandler = handleBackgroundNotification as EventListener;
-      navigator.serviceWorker.addEventListener('message', messageHandler);
-      
-      // Also listen for messages when service worker is ready
-      navigator.serviceWorker.ready.then((registration) => {
-        if (registration.active) {
-          registration.active.addEventListener('message', messageHandler);
-        }
-      });
-    }
-    
-    // Fallback: listen to window messages
-    window.addEventListener('message', handleBackgroundNotification as EventListener);
-    
-    return () => {
-      if ('serviceWorker' in navigator) {
-        const messageHandler = handleBackgroundNotification as EventListener;
-        navigator.serviceWorker.removeEventListener('message', messageHandler);
-        navigator.serviceWorker.ready.then((registration) => {
-          if (registration.active) {
-            registration.active.removeEventListener('message', messageHandler);
-          }
+    const setup = async () => {
+      const db = await FirebaseUtil.getFirestore();
+      const { collection, query, orderBy, limit, onSnapshot } = await import('firebase/firestore');
+
+      const env = getEnvironment();
+      const q = query(
+        collection(db, `users/${userId}_${env}/notifications`),
+        orderBy('timestamp', 'desc'),
+        limit(100)
+      );
+
+      unsubscribe = onSnapshot(q, async (snapshot) => {
+        const next = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            ...data,
+            id: doc.id,
+            timestamp: data.timestamp?.toMillis() || Date.now()
+          } as Notification;
         });
-      }
-      window.removeEventListener('message', handleBackgroundNotification as EventListener);
-    };
-  }, [handleIncomingNotification, userId]);
 
-  // Close on outside click
+        if (!isInitial) {
+          for (const n of next) {
+            if (!previousIds.has(n.id) && !n.read) {
+              // Play beep sound for new notification
+              playBeep();
+
+              showModernToast(n, async () => {
+                try {
+                  const { doc, updateDoc, getDoc } = await import('firebase/firestore');
+                  const docRef = doc(db, `users/${userId}_${env}/notifications/${n.id}`);
+                  
+                  // Check if document exists before updating
+                  const docSnap = await getDoc(docRef);
+                  if (docSnap.exists()) {
+                    await updateDoc(docRef, { read: true });
+                  }
+                } catch (error: any) {
+                  // Silently handle errors (document might have been deleted)
+                  console.debug('Failed to mark notification as read:', error.message);
+                }
+              });
+
+              setIsAnimating(true);
+              setTimeout(() => setIsAnimating(false), 800);
+            }
+          }
+        }
+
+        previousIds = new Set(next.map(n => n.id));
+        isInitial = false;
+        setNotifications(next);
+      });
+    };
+
+    setup();
+    return () => unsubscribe?.();
+  }, [userId]);
+
+  // ✅ CLICK OUTSIDE CLOSE
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handler = (e: MouseEvent) => {
       if (
         isOpen &&
         panelRef.current &&
-        !panelRef.current.contains(event.target as Node) &&
+        !panelRef.current.contains(e.target as Node) &&
         bellRef.current &&
-        !bellRef.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-      }
+        !bellRef.current.contains(e.target as Node)
+      ) setIsOpen(false);
     };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [isOpen]);
 
-  // Handlers
-  const handleNotificationClick = async (notification: Notification) => {
-    if (!notification.read) {
-      await storage.markAsRead(notification.id);
-    }
-    
-    if (notification.url) {
-      window.location.href = notification.url;
-    }
-    
-    setIsOpen(false);
-  };
-
-  const handleMarkAsRead = async (e: React.MouseEvent, notificationId: string) => {
-    e.stopPropagation();
-    await storage.markAsRead(notificationId);
-  };
-
-  const handleDeleteNotification = async (e: React.MouseEvent, notificationId: string) => {
-    e.stopPropagation();
-    await storage.deleteNotification(notificationId);
-    await loadNotifications();
-  };
-
-  const handleClearAll = async () => {
-    await storage.deleteAll();
-    await loadNotifications();
-  };
-
-  const formatTime = (timestamp: number) => {
+  // ✅ ACTIONS
+  const markAsRead = async (id: string) => {
     try {
-      return formatDistanceToNow(new Date(timestamp), { addSuffix: true });
-    } catch {
-      return 'Just now';
+      const db = await FirebaseUtil.getFirestore();
+      const env = getEnvironment();
+      const { doc, updateDoc, getDoc } = await import('firebase/firestore');
+      const docRef = doc(db, `users/${userId}_${env}/notifications/${id}`);
+      
+      // Check if document exists before updating
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        await updateDoc(docRef, { read: true });
+      }
+    } catch (error: any) {
+      // Silently handle errors (document might have been deleted)
+      console.debug('Failed to mark notification as read:', error.message);
     }
   };
 
-  const unreadCount = storage.getUnreadCount(notifications);
+  const deleteNotification = async (id: string) => {
+    try {
+      const db = await FirebaseUtil.getFirestore();
+      const env = getEnvironment();
+      const { doc, deleteDoc, getDoc } = await import('firebase/firestore');
+      const docRef = doc(db, `users/${userId}_${env}/notifications/${id}`);
+      
+      // Check if document exists before deleting
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        await deleteDoc(docRef);
+      }
+    } catch (error: any) {
+      // Silently handle errors (document might have been deleted)
+      console.debug('Failed to delete notification:', error.message);
+    }
+  };
+
+  const deleteAll = async () => {
+    const db = await FirebaseUtil.getFirestore();
+    const env = getEnvironment();
+    const { writeBatch, collection, getDocs } = await import('firebase/firestore');
+
+    const snapshot = await getDocs(collection(db, `users/${userId}_${env}/notifications`));
+    const batch = writeBatch(db);
+    snapshot.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+  };
+
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  const formatTime = (ts: number) =>
+    formatDistanceToNow(new Date(ts), { addSuffix: true });
 
   return (
     <>
-      {/* Notification Bell */}
+      {/* 🔔 BELL */}
       <button
         ref={bellRef}
         onClick={() => setIsOpen(!isOpen)}
         className={`relative ${className} ${isAnimating ? 'animate-pulse' : ''}`}
-        aria-label="Notifications"
       >
         <Bell className="w-6 h-6 text-gray-700" />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
       </button>
 
-      {/* Slide-out Panel */}
+      {/* 📦 PANEL */}
       {isOpen && (
         <div className="fixed inset-0 z-50 pointer-events-none">
-          {/* Backdrop */}
-          <div 
-            className="absolute inset-0 bg-black/20 pointer-events-auto"
-            onClick={() => setIsOpen(false)}
-          />
-          
-          {/* Panel */}
+          <div className="absolute inset-0 bg-black/20 pointer-events-auto" onClick={() => setIsOpen(false)} />
+
           <div
             ref={panelRef}
-            className="absolute right-0 top-0 h-full w-[400px] bg-white shadow-xl pointer-events-auto transform transition-transform duration-300 ease-in-out"
+            className="absolute right-0 top-0 h-full w-[400px] bg-white shadow-xl pointer-events-auto"
           >
-            {/* Header */}
-            <div className="bg-[#041D76] text-white p-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            {/* HEADER */}
+            <div className="bg-[#041D76] text-white p-4 flex justify-between">
+              <div className="flex gap-2 items-center">
                 <Bell className="w-5 h-5" />
-                <h2 className="text-lg font-semibold">Notifications</h2>
+                <span className="font-semibold">Notifications</span>
                 {unreadCount > 0 && (
-                  <span className="bg-white/20 px-2 py-1 rounded-full text-sm font-medium">
+                  <span className="bg-white/20 px-2 py-0.5 rounded-full text-sm">
                     {unreadCount} new
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+
+              <div className="flex gap-3 items-center">
                 {notifications.length > 0 && (
-                  <button
-                    onClick={handleClearAll}
-                    className="text-sm hover:underline"
-                  >
-                    Clear all
-                  </button>
+                  <button onClick={deleteAll} className="text-sm underline">Clear all</button>
                 )}
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="p-1 hover:bg-white/10 rounded"
-                  aria-label="Close"
-                >
+                <button onClick={() => setIsOpen(false)}>
                   <X className="w-5 h-5" />
                 </button>
               </div>
             </div>
 
-            {/* Notification List */}
-            <div className="h-[calc(100%-80px)] overflow-y-auto">
+            {/* LIST */}
+            <div className="h-[calc(100%-80px)] overflow-y-auto divide-y divide-gray-200">
               {notifications.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                  <Bell className="w-12 h-12 mb-4 opacity-50" />
-                  <p className="text-lg font-medium">No notifications</p>
+                <div className="h-full flex items-center justify-center text-gray-400">
+                  No notifications
                 </div>
               ) : (
-                <div className="divide-y">
-                  {notifications.map((notification) => (
-                    <div
-                      key={notification.id}
-                      className={`group p-4 transition-colors ${
-                        notification.read
-                          ? 'bg-white hover:bg-gray-50'
-                          : 'bg-blue-50 hover:bg-blue-100'
+                notifications.map(n => (
+                  <div
+                    key={n.id}
+                    className={`group relative flex gap-3 p-4 hover:bg-gray-50 transition-colors ${n.read ? 'bg-white' : 'bg-blue-50/50'
                       }`}
+                  >
+                    {/* Content */}
+                    <div
+                      onClick={() => !n.read && markAsRead(n.id)}
+                      className="flex-1 min-w-0 cursor-pointer"
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div 
-                          className="flex-1 min-w-0 cursor-pointer"
-                          onClick={() => handleNotificationClick(notification)}
-                        >
-                          <h4
-                            className={`text-base mb-1 ${
-                              notification.read ? 'font-normal' : 'font-semibold'
-                            } text-gray-900`}
-                          >
-                            {notification.title}
-                          </h4>
-                          <p className="text-sm text-gray-600 mb-2 line-clamp-2">
-                            {notification.body}
-                          </p>
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs text-gray-500">
-                              {formatTime(notification.timestamp)}
-                            </span>
-                            {!notification.read && (
-                              <button
-                                onClick={(e) => handleMarkAsRead(e, notification.id)}
-                                className="text-xs text-blue-600 hover:underline"
-                              >
-                                Mark as read
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className={`text-sm leading-tight truncate flex-1 min-w-0 ${n.read ? 'font-normal text-gray-700' : 'font-semibold text-gray-900'}`}>
+                          {n.title}
+                        </h4>
                         <button
-                          onClick={(e) => handleDeleteNotification(e, notification.id)}
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 hover:text-red-600 rounded transition-all"
-                          aria-label="Clear notification"
-                          title="Clear notification"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteNotification(n.id);
+                          }}
+                          className="flex-shrink-0 self-start mt-0.5 p-1.5 text-red-500 hover:text-red-600 hover:bg-red-50 rounded"
+                          title="Delete notification"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 size={16} />
                         </button>
                       </div>
+                      <p className="text-xs text-gray-600 mt-1.5 leading-relaxed line-clamp-2">
+                        {n.body}
+                      </p>
+                      <div className="flex items-center justify-between mt-3">
+                        <span className="text-xs text-gray-400">
+                          {formatTime(n.timestamp)}
+                        </span>
+                        {!n.read && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              markAsRead(n.id);
+                            }}
+                            className="text-xs text-blue-600 hover:text-blue-700 hover:underline font-medium"
+                          >
+                            Mark as read
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))
               )}
             </div>
-
-            {/* Collapse Arrow */}
-            <button
-              onClick={() => setIsOpen(false)}
-              className="absolute left-0 top-1/2 -translate-x-full bg-gray-800 text-white p-2 rounded-l-lg hover:bg-gray-700 transition-colors"
-              aria-label="Collapse"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
           </div>
         </div>
       )}
