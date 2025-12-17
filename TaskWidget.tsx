@@ -19,6 +19,8 @@ interface TaskWidgetProps {
     task_id: string;
     className?: string;
     onTaskUpdated?: () => void;
+    /** API base path - defaults to '/api'. Use 'api' for apps without leading slash */
+    apiBasePath?: string;
 }
 
 interface Task {
@@ -128,7 +130,7 @@ interface Task {
     };
 }
 
-const TaskWidget = ({ task_id, className = '', onTaskUpdated }: TaskWidgetProps) => {
+const TaskWidget = ({ task_id, className = '', onTaskUpdated, apiBasePath = '/api' }: TaskWidgetProps) => {
     const [task, setTask] = useState<Task | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isActionLoading, setIsActionLoading] = useState(false);
@@ -143,7 +145,7 @@ const TaskWidget = ({ task_id, className = '', onTaskUpdated }: TaskWidgetProps)
 
         try {
             setIsLoading(true);
-            const response = await $api.fetch(`/api/mgt/v1/tasks/new/${task_id}`);
+            const response = await $api.fetch(`${apiBasePath}/mgt/v1/tasks/new/${task_id}`);
             
             if ($api.isSuccessful(response)) {
                 setTask(response?.data);
@@ -166,7 +168,7 @@ const TaskWidget = ({ task_id, className = '', onTaskUpdated }: TaskWidgetProps)
 
         try {
             setIsActionLoading(true);
-            const response = await $api.post(`/api/mgt/v1/tasks/${task_id}/complete`, '');
+            const response = await $api.post(`${apiBasePath}/mgt/v1/tasks/${task_id}/complete`, '');
 
             if ($api.isSuccessful(response)) {
                 await fetchTaskDetails();
@@ -186,7 +188,7 @@ const TaskWidget = ({ task_id, className = '', onTaskUpdated }: TaskWidgetProps)
 
         try {
             setIsChangingStatus(true);
-            const response = await $api.post(`/api/mgt/v1/tasks/${task_id}/status`, {
+            const response = await $api.post(`${apiBasePath}/mgt/v1/tasks/${task_id}/status`, {
                 status: newStatus,
             });
 
@@ -208,7 +210,7 @@ const TaskWidget = ({ task_id, className = '', onTaskUpdated }: TaskWidgetProps)
 
         try {
             setIsAddingComment(true);
-            const response = await $api.post(`/api/mgt/v1/tasks/${task_id}/comments`, {
+            const response = await $api.post(`${apiBasePath}/mgt/v1/tasks/${task_id}/comments`, {
                 content: newComment,
             });
 
