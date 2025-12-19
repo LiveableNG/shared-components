@@ -553,7 +553,7 @@ const TaskWidget = ({ task_id, className = '', onTaskUpdated, apiBasePath = '/ap
                             </div>
                             <div className="flex-1">
                                 <textarea
-                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    className="w-full px-4 py-3 border border-gray-300 text-black rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                     placeholder="Add a comment..."
                                     value={newComment}
                                     onChange={(e) => setNewComment(e.target.value)}
