@@ -13,6 +13,7 @@ import {
     Bell
 } from 'lucide-react';
 import { $api } from '@/services';
+import FormattedCommentContent from '@/shared-components/FormattedCommentContent';
 
 interface TaskWidgetProps {
     task_id: string;
@@ -589,7 +590,7 @@ const TaskWidget = ({ task_id, className = '', onTaskUpdated, apiBasePath = '/ap
                                                 {new Date(comment.created_at).toLocaleString()}
                                             </span>
                                         </div>
-                                        <p className="text-sm text-gray-700">{comment.content}</p>
+                                        <FormattedCommentContent content={comment.content} />
                                     </div>
                                 </div>
                             ))}
